@@ -3,7 +3,6 @@ name: Build docker image
 on:
   release:
     types: [created]
-  workflow_dispatch:
 
 jobs:
   build:
@@ -24,3 +23,4 @@ jobs:
           tags: |
             shouya/docker-duplicacy:latest
             shouya/docker-duplicacy:${{ github.event.release.tag_name }}
+          push: true
