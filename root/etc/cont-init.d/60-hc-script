@@ -5,4 +5,6 @@ if [[ ! -z "$HC_PING_ID" && ! -f "/scripts/pre-backup.sh" && ! -f "/scripts/post
        > /scripts/pre-backup.sh
   echo curl -fsS -m 10 --retry 5 --data-binary @/tmp/backup.log "https://hc-ping.com/$HC_PING_ID/\$1" \
        > /scripts/post-backup.sh
+
+  chmod +x /scripts/pre-backup.sh /scripts/post-backup.sh
 fi
