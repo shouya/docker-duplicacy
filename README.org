@@ -1,0 +1,192 @@
+* Duplicacy in Docker
+
+This Docker image contains a daemon that backup files using [[https://github.com/gilbertchen/duplicacy][duplicacy]]. Understanding of basic usage of duplicacy is expected.
+
+** Features
+
+- periodic backup
+- periodic prune
+- pre/post-backup hooks
+- report to healthchecks.io with status and logs
+
+** Difference to duplicacy-autobackup
+
+[[https://github.com/christophetd/duplicacy-autobackup][christophetd/duplicacy-autobackup]] implemented the periodic backup feature.
+
+Based on which I forked [[https://github.com/shouya/duplicacy-autobackup][shouya/duplicacy-autobackup]], which bumped the version of duplicacy and converted the base image to s6 to support running the jobs non-root users. I also added support for hooks and healthchecks.io reporting.
+
+In this project, docker-duplicacy, I intentionally dropped the initialization feature, for two reasons:
+
+- The image is tidier, and using the image doesn't require as many environment variables
+- You may want to initialize the repo in different ways other than those limitedly supported by the script
+
+As a result, you need to initialize the backup repository manually outside Docker, and then directly provide duplicacy's =preferences= file via a mount.
+
+** Basic usage
+
+Suppose you have the following docker-compose file for a sample mediawiki service:
+
+#+begin_src yaml
+version: '3'
+
+services:
+  wiki:
+    image: mediawiki
+    volumes:
+      - ./LocalSettings.php:/var/www/html/LocalSettings.php:ro
+      - wiki-images:/var/www/html/images
+      - wiki-data:/var/www/data
+    ports:
+      - 80:80
+    restart: always
+
+volumes:
+  wiki-images:
+  wiki-data:
+#+end_src
+
+Suppose you want to backup LocalSettings.php file, wiki-images and wiki-data volume. You should do the followings.
+
+*** Step 1: add volumes
+
+Add two new volumes for duplicacy:
+
+#+begin_src yaml
+volumes:
+  duplicacy_store:
+  duplicacy_remote:
+    driver_opts:
+      type: "nfs"
+      o: "addr=my-nfs-server"
+      device: ":/my/nfs/duplicacy/directory"
+#+end_src
+
+=duplicacy_store= will be used to hold duplicacy cache files.
+
+=duplicacy_remote= will serve as a backup destination. If you don't decided to use a different storage (such as SFTP or S3), you don't need this remote.
+
+*** Step 2: prepare duplicacy preferences
+
+In an empty directory at your local computer, run =duplicacy init= with the correct parameters.
+
+#+begin_src bash
+# create the directory for data
+mkdir data
+# create the directory for backup destination
+mkdir dest
+
+cd data
+# initialize a repo with name "wiki", which backups to ../dest, encrypted.
+duplicacy init wiki ../dest -e
+#+end_src
+
+Then you'll be prompted for encryption passwords, enter accordingly.
+
+This will generate a =.duplicacy/preferences= file that looks like:
+
+#+begin_src bash
+[
+    {
+        "name": "default",
+        "id": "wiki",
+        "repository": "",
+        "storage": "/tmp/dest",
+        "encrypted": true,
+        "no_backup": false,
+        "no_restore": false,
+        "no_save_password": false,
+        "nobackup_file": "",
+        "keys": null
+    }
+]
+#+end_src
+
+Next you need to edit the file to provide all credentials in the =keys= field. Refer to [[https://forum.duplicacy.com/t/passwords-credentials-and-environment-variables/1094][Passwords, credentials and environment variables]] to learn about the =keys= you'll need. The final file should look like:
+
+#+begin_src bash
+[
+    {
+        "name": "default",
+        "id": "wiki",
+        "repository": "",
+        "storage": "/tmp/dest",
+        "encrypted": true,
+        "no_backup": false,
+        "no_restore": false,
+        "no_save_password": false,
+        "nobackup_file": "",
+        "keys": {
+            "password": "<YOUR-ENCRYPTION-PASSWORD>"
+        }
+    }
+]
+#+end_src
+
+Confirm your =preferences= file is correct by running =duplicacy list=. You should not be prompted to enter any password and the listing should return correctly.
+
+In above example, the backup destination is a local folder. You may want to change it to a fixed location like =/dest=, so you can mount any path to it in a container.
+
+*** Step 3: add docker-duplicacy container alongside your services
+
+Add the backup service.
+
+#+begin_src yaml
+services:
+  backup:
+    image: shouya/duplicacy-autobackup:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    restart: always
+    volumes:
+      # mount remote position, which is not needed if you use a storage other than local folder
+      - duplicacy_remote:/dest
+      # base directory, any files mounted below /data will be included in the backup
+      - duplicacy_store:/data
+      # mount the preferences file
+      - ./preferences:/data/.duplicacy/preferences
+      # mount files/directories below /data as readonly
+      - wiki-data:/data/data:ro
+      - wiki-images:/data/images:ro
+      - ./LocalSettings.php:/data/LocalSettings.php:ro
+#+end_src
+
+You can customize it with environment variables, see the [[id:C2F36AE3-196A-48BF-9708-357CBDEE6688][Customization]] section.
+
+Then =docker-compose up -d= to start the service.
+
+** Customization
+:PROPERTIES:
+:ID:       C2F36AE3-196A-48BF-9708-357CBDEE6688
+:END:
+
+You can customize the behavior using the following environment variables:
+
+| variable                 | default value | description                                                                                                    |
+|--------------------------+---------------+----------------------------------------------------------------------------------------------------------------|
+| =BACKUP_SCHEDULE=          | @hourly       | A cron-like spec on when to run backup.                                                                        |
+| =PRUNE_SCHEDULE=           | @hourly       | A cron-like spec on when to run prune.                                                                         |
+| =DUPLICACY_PRUNE_OPTIONS=  | ""            | Options to pass to =duplicacy prune=. Pruning will not run if this environment variable is not set.              |
+| =DUPLICACY_BACKUP_OPTIONS= | ""            | Options to pass to =duplicacy backup=.                                                                           |
+| =HC_PING_ID=               | ""            | The [[https://healthchecks.io/][healthchecks.io]] check id to notify. If provided it will generate the pre/post-backup script automatically. |
+| =PUID= / =PGID=              | -             | See [[https://docs.linuxserver.io/general/understanding-puid-and-pgid][Understanding PUID and PGID]].                                                                               |
+
+You can provide pre/post-backup scripts that runs before and after the
+backup.  Mount your scripts at =/scripts/pre-backup.sh= or
+=/scripts/post-backup.sh= so they will get invoked accordingly.
+
+If you specify either pre- or post-backup scripts, it will disable the
+healtchecks.io functionality.
+
+*** Pre-backup script
+
+You can return a non-zero code in pre-backup script to inhibit the
+backup process.
+
+*** Post-backup script
+
+The status code of =duplicacy backup= will be provided in the first
+argument (=$1=) in the post-backup script.
+
+The output (and stderr) of =duplicacy backup= and the pre-backup script
+can be found in =/tmp/backup.log= file.
