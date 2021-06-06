@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 PRE_BACKUP_SCRIPT=/scripts/pre-backup.sh
 POST_BACKUP_SCRIPT=/scripts/post-backup.sh
@@ -16,7 +16,7 @@ do_backup() {
   if [[ -f "$PRE_BACKUP_SCRIPT" ]]; then
     echo "Running pre-backup script"
     sh "$PRE_BACKUP_SCRIPT" 2>&1 | tee /tmp/backup.log
-    status="$?"
+    status="${PIPESTATUS[0]}"
   fi
 
   if [[ "$status" != 0 ]]; then
@@ -26,12 +26,12 @@ do_backup() {
 
   echo "Backing up"
   duplicacy backup $DUPLICACY_BACKUP_OPTIONS 2>&1 | tee -a /tmp/backup.log
-  status="$?"
+  status="${PIPESTATUS[0]}"
 
   if [[ -f "$POST_BACKUP_SCRIPT" ]]; then
     echo "Running post-backup script"
     sh "$POST_BACKUP_SCRIPT" "$status" | tee -a /tmp/backup.log
-    status="$?"
+    status="${PIPESTATUS[0]}"
     echo "Post-backup script exited with status $status"
   fi
 }
