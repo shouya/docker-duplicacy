@@ -8,6 +8,8 @@ POST_BACKUP_SCRIPT=/scripts/post-backup.sh
   exit 1
 }
 
+cd /data
+
 do_backup() {
   status=0
 
