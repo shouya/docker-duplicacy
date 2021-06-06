@@ -1,4 +1,6 @@
 * Duplicacy in Docker
+<img alt="Docker Image Version (latest semver)" src="https://img.shields.io/docker/v/shouya/docker-duplicacy">
+<img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/shouya/docker-duplicacy/main">
 
 This Docker image contains a daemon that backup files using [[https://github.com/gilbertchen/duplicacy][duplicacy]]. Understanding of basic usage of duplicacy is expected.
 
